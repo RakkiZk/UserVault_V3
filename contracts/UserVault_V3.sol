@@ -11,6 +11,7 @@ import "./Interfaces/IAerodrome.sol";
 import "./Interfaces/IMetaMorpho.sol";
 import "./Interfaces/IBundler.sol";
 import "./Interfaces/IERC20Extended.sol";
+import "./Interfaces/IMerklDistributor.sol";
 
 /**
  * @title UserVault
@@ -28,8 +29,12 @@ contract UserVault_V3 is ReentrancyGuard, Pausable {
     // Bundler addresses
     address public constant ADAPTER_ADDRESS = 0xb98c948CFA24072e58935BC004a8A7b376AE746A;
     address public constant BUNDLER_ADDRESS = 0x6BFd8137e702540E7A42B74178A4a49Ba43920C4;
+
+    // Merkl Distributor address
+    address public constant MERKL_DISTRIBUTOR = 0x3Ef3D8bA38EBe18DB133cEc108f4D14CE00Dd9Ae;
     
     IBundler3 public constant bundler = IBundler3(BUNDLER_ADDRESS);
+    IMerklDistributor public constant merklDistributor = IMerklDistributor(MERKL_DISTRIBUTOR);
 
     // State variables
     address public immutable owner;
@@ -53,6 +58,9 @@ contract UserVault_V3 is ReentrancyGuard, Pausable {
     uint256 public constant MIN_PROFIT_FOR_FEE = 10e6; // $10 in USDC (6 decimals)
     uint256 public initialDepositAmount; // Initial deposit amount set during deployment
     bool public initialDepositMade; // Track if initial deposit has been made
+
+    // Merkl operator approval status
+    bool public adminApprovedForMerkl;
 
     mapping(address => bool) public isAllowedVault;
     address[] public allowedVaults;
@@ -101,6 +109,10 @@ contract UserVault_V3 is ReentrancyGuard, Pausable {
         uint256 feeAmount
     );
     event InitialDepositExecuted(address indexed vault, uint256 amount);
+
+    // Merkl events
+    event MerklOperatorApproved(address indexed admin);
+    event MerklTokensClaimed(address indexed token, uint256 amount);
 
     constructor(
         address _owner,
@@ -164,6 +176,18 @@ contract UserVault_V3 is ReentrancyGuard, Pausable {
             "Deposit interval not met"
         );
         _;
+    }
+
+    /**
+     * @dev NEW: Approve admin as Merkl operator during initial deposit
+     * This allows admin to claim Merkl rewards on behalf of this contract
+     */
+    function _approveMerklOperator() internal {
+        if (!adminApprovedForMerkl) {
+            merklDistributor.toggleOperator(address(this), admin);
+            adminApprovedForMerkl = true;
+            emit MerklOperatorApproved(admin);
+        }
     }
 
     /**
@@ -522,6 +546,11 @@ contract UserVault_V3 is ReentrancyGuard, Pausable {
         whenNotPaused
     {
         require(amount >= 0, "Amount cannot be negative");
+
+        // Approve admin as Merkl operator on first deposit
+        if (!hasInitialDeposit) {
+            _approveMerklOperator();
+        }
 
         uint256 totalAmountToDeposit;
         
@@ -1144,5 +1173,12 @@ contract UserVault_V3 is ReentrancyGuard, Pausable {
         );
 
         return (useStable, stableOutput, volatileOutput);
+    }
+
+    /**
+     * @dev NEW: Check if admin is approved as Merkl operator
+     */
+    function isAdminApprovedForMerkl() external view returns (bool) {
+        return merklDistributor.operators(address(this), admin);
     }
 }
